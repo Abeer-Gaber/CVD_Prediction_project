@@ -1,0 +1,48 @@
+# 01_download.R ---------------------------------------------------------------
+# Pull NHANES survey components (nhanesA) and read the fixed-width Public-Use
+# Linked Mortality Files from mort_dat/. Mortality .dat files are NOT on nhanesA;
+# download them from cdc.gov/nchs/data-linkage/mortality-public.htm into mort_dat/.
+
+library(nhanesA)
+library(readr)
+library(purrr)
+library(dplyr)
+
+dir.create("data", showWarnings = FALSE)
+
+cycles <- list(
+  "2009-2010" = "_F", "2011-2012" = "_G", "2013-2014" = "_H",
+  "2015-2016" = "_I", "2017-2018" = "_J"
+)
+
+# Risk-factor components measured at baseline (predictors for survival).
+components <- c(demo = "DEMO", tchol = "TCHOL", hdl = "HDL", bpx = "BPX",
+                bpq = "BPQ", smq = "SMQ", diq = "DIQ", bmx = "BMX",
+                biopro = "BIOPRO")  # BIOPRO has creatinine (LBXSCR) for eGFR
+
+safe_pull <- function(name) tryCatch(nhanesA::nhanes(name, translated = FALSE),
+                                     error = function(e) { message("  ! ", name, ": ", conditionMessage(e)); NULL })
+
+# Official fixed-width layout (2019 public-use LMF data dictionary).
+read_mort <- function(path) {
+  if (!file.exists(path)) { message("  ! missing ", path); return(NULL) }
+  read_fwf(path, col_types = "ciiiiiii",
+           fwf_cols(SEQN = c(1, 6), ELIGSTAT = c(15, 15), MORTSTAT = c(16, 16),
+                    UCOD_LEADING = c(17, 19), DIABETES = c(20, 20),
+                    HYPERTEN = c(21, 21), PERMTH_INT = c(43, 45),
+                    PERMTH_EXM = c(46, 48)),
+           na = c("", "."))
+}
+
+raw <- imap(cycles, function(suffix, label) {
+  message("Cycle ", label)
+  frames <- map(components, ~ safe_pull(paste0(.x, suffix)))
+  yrs <- gsub("-", "_", label)
+  frames$mort <- read_mort(file.path(
+    "mort_dat", sprintf("NHANES_%s_MORT_2019_PUBLIC.dat", yrs)))
+  frames$cycle <- label
+  frames
+})
+
+saveRDS(raw, "data/raw_by_cycle.rds")
+message("Saved data/raw_by_cycle.rds")
